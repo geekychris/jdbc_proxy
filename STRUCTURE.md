@@ -10,6 +10,7 @@ This project implements a comprehensive JDBC driver proxy that provides hooks fo
 jdbc_proxy/
 ├── pom.xml                             # Maven project configuration
 ├── README.md                           # Comprehensive documentation
+├── DESIGN.md                           # System design with diagrams
 ├── STRUCTURE.md                        # This file
 │
 ├── src/main/java/com/example/jdbcproxy/

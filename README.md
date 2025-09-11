@@ -27,42 +27,31 @@ A powerful JDBC driver proxy that provides hooks for logging, SQL rewriting, and
 ### 2. Basic Usage
 
 ```java
-import driver.com.hitorro.jdbcproxy.ProxyDriver;
-import extensions.com.hitorro.jdbcproxy.ConsoleJdbcLogger;
-import hooks.com.hitorro.jdbcproxy.ProxyConfiguration;
+import com.example.jdbcproxy.driver.ProxyDriver;
+import com.example.jdbcproxy.extensions.ConsoleJdbcLogger;
+import com.example.jdbcproxy.hooks.ProxyConfiguration;
 
 // Configure the proxy
 ProxyConfiguration config = ProxyDriver.getConfiguration("default");
-config.
+config.addLogger(new ConsoleJdbcLogger());
 
-        addLogger(new ConsoleJdbcLogger());
-
-        // Use proxy URL instead of direct database URL
-        String originalUrl = "jdbc:h2:mem:testdb";
-        String proxyUrl = "jdbc:proxy:" + originalUrl;
+// Use proxy URL instead of direct database URL
+String originalUrl = "jdbc:h2:mem:testdb";
+String proxyUrl = "jdbc:proxy:" + originalUrl;
 
 // Connect normally - all JDBC operations will be logged
-try(
-        Connection conn = DriverManager.getConnection(proxyUrl, "user", "password")){
-        // Your existing JDBC code works unchanged
-        try(
-        PreparedStatement stmt = conn.prepareStatement("SELECT * FROM users WHERE id = ?")){
-        stmt.
-
-        setInt(1,123);
-        try(
-        ResultSet rs = stmt.executeQuery()){
-        // Results and operations are automatically logged
-        while(rs.
-
-        next()){
-        System.out.
-
-        println(rs.getString("name"));
+try (Connection conn = DriverManager.getConnection(proxyUrl, "user", "password")) {
+    // Your existing JDBC code works unchanged
+    try (PreparedStatement stmt = conn.prepareStatement("SELECT * FROM users WHERE id = ?")) {
+        stmt.setInt(1, 123);
+        try (ResultSet rs = stmt.executeQuery()) {
+            // Results and operations are automatically logged
+            while (rs.next()) {
+                System.out.println(rs.getString("name"));
+            }
         }
-        }
-        }
-        }
+    }
+}
 ```
 
 ### 3. Console Output
@@ -389,6 +378,122 @@ For questions, issues, or contributions, please:
 1. Check the [existing issues](https://github.com/your-repo/jdbc-proxy-driver/issues)
 2. Create a new issue if needed
 3. Provide sample code and configuration when reporting bugs
+
+## System Design
+
+This section provides a high-level overview of how the JDBC Proxy Driver is structured and how requests flow through the system.
+
+### Architecture Overview
+
+ASCII overview diagram:
+```
++---------------------------+                 +--------------------------+
+|        Application        |  JDBC calls     |   Underlying JDBC Driver |
+|  (your code / frameworks) +---------------->+  & Database Connection   |
+|         uses JDBC         |                 |      (H2, Pg, MySQL)    |
++-------------+-------------+                 +------------+-------------+
+              |                                           ^
+              |                                           |
+              v                                           |
++-------------+-------------+     delegates    +----------+-------------+
+|       JDBC Proxy Driver   |----------------->|   Real Driver/DB       |
+|  - ProxyDriver            |                  |  via DriverManager     |
+|  - ProxyConnection        |                  +------------------------+
+|  - ProxyStatement(s)      |
+|  - ProxyResultSet         |
+|  Hooks / Extensions:      |
+|    - SqlRewriter(s)       |
+|    - ResultProcessor(s)   |
+|    - JdbcLogger(s)        |
++---------------------------+
+```
+
+### Mermaid: Component Diagram
+```mermaid
+flowchart LR
+    App[Application] -->|JDBC URL: jdbc:proxy:...| ProxyDriver
+    ProxyDriver --> ProxyConnection
+    ProxyConnection --> ProxyStatement
+    ProxyStatement --> ProxyPreparedStatement
+    ProxyPreparedStatement --> ProxyCallableStatement
+    ProxyStatement -->|execute| ProxyResultSet
+    ProxyPreparedStatement -->|execute| ProxyResultSet
+
+    subgraph Hooks
+      SqlRewriter
+      ResultProcessor
+      JdbcLogger
+    end
+
+    ProxyConnection -->|apply rewriting| SqlRewriter
+    ProxyResultSet -->|transform/process| ResultProcessor
+    ProxyDriver -->|log connection| JdbcLogger
+    ProxyStatement -->|log statements| JdbcLogger
+    ProxyConnection -->|log tx| JdbcLogger
+
+    ProxyDriver -->|delegate via DriverManager| RealDriver[Underlying JDBC Driver]
+    RealDriver --> DB[(Database)]
+```
+
+### Mermaid: Request Flow (Sequence)
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant PDrv as ProxyDriver
+    participant PCon as ProxyConnection
+    participant PStm as ProxyStatement/PreparedStatement
+    participant PRS as ProxyResultSet
+    participant UDrv as Underlying Driver
+    participant DB as Database
+
+    App->>PDrv: DriverManager.getConnection("jdbc:proxy:actualUrl", props)
+    PDrv->>UDrv: load underlying driver (Class.forName if needed)
+    PDrv->>UDrv: DriverManager.getConnection(actualUrl, props)
+    UDrv-->>PDrv: Connection
+    PDrv->>PCon: wrap Connection
+    PDrv->>PCon: log connection via JdbcLogger
+    App-->>PCon: createStatement()/prepareStatement(sql)
+    PCon->>PStm: wrap Statement/PreparedStatement
+    App->>PStm: executeQuery()/executeUpdate()
+    PStm->>SqlRewriter: rewrite SQL
+    PStm->>UDrv: execute(rewritten SQL)
+    UDrv->>DB: run query
+    DB-->>UDrv: rows/update count
+    UDrv-->>PStm: ResultSet/rowcount
+    PStm->>JdbcLogger: log statement
+    PStm->>PRS: wrap ResultSet
+    loop iterate rows
+      App->>PRS: next()/getXxx()
+      PRS->>ResultProcessor: processRow/transformColumn
+      PRS-->>App: value
+    end
+    PRS->>JdbcLogger: log result set access
+```
+
+### Deployment Considerations
+- The proxy is a library embedded in your application process; no separate service is required.
+- Works with any pool (HikariCP, DBCP, etc.) by pointing the pool to the proxy URL.
+- Multiple configurations supported via `proxy.configKey`.
+
+```mermaid
+graph TD
+  A[App/Service] -- classpath --> P[(JDBC Proxy Driver JAR)]
+  A -- jdbc:proxy:... --> P
+  P -- delegates --> D[Underlying JDBC Driver]
+  D --> DB[(Database)]
+```
+
+### Performance Notes
+- When hooks are disabled: overhead is near zero (straight delegation).
+- Logging/rewriting adds minimal overhead (string ops and iteration over small lists).
+- Result processing runs per row only when a processor is configured.
+
+### Failure Modes & Safety
+- Hook exceptions are caught and logged; core JDBC call still proceeds.
+- Underlying driver errors are propagated unchanged.
+- Thread-safe configuration; hook lists are `CopyOnWriteArrayList`.
+
+---
 
 ## Roadmap
 
