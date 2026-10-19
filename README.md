@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="JDBC Proxy logo" width="180">
+</p>
+
 # JDBC Proxy Driver
 
 A powerful JDBC driver proxy that provides hooks for logging, SQL rewriting, and result processing. Designed for debugging, monitoring, and instrumenting JDBC operations with minimal changes to existing code.
